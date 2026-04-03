@@ -1,4 +1,4 @@
-# *S*ong *Word* *S*earch
+# **S**ong **Word** **S**earch
 
 A dead-simple CLI for looking up song lyrics, powered by Genius.
 
