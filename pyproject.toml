@@ -1,7 +1,7 @@
 [project]
 name = "swords"
 version = "0.1.1"
-description = "Add your description here"
+description = "A dead-simple CLI for looking up song lyrics, powered by Genius."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
@@ -9,6 +9,11 @@ dependencies = [
     "requests>=2.33.1",
     "selectolax>=0.4.7",
 ]
+
+[project.urls]
+Repository = "https://github.com/patfantmusic/swords"
+Issues = "https://github.com/patfantmusic/swords/issues"
+Changelog = "https://github.com/patfantmusic/swords/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [
