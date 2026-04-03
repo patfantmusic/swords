@@ -1,4 +1,4 @@
-# **S**ong **Word** **S**earch
+# <span style="color:blue">s</span>ong <span style="color:blue">word</span> <span style="color:blue">s</span><span style="color:yellow">earch</span>
 
 A dead-simple CLI for looking up song lyrics, powered by Genius.
 
