@@ -1,6 +1,6 @@
 # swords
 
-[![Build](https://github.com/patfantmusic/swords/actions/workflows/publish.yml/badge.svg)](https://github.com/patfantmusic/swords/actions/workflows/publish.yml)
+[![Upload Python Package](https://github.com/patfantmusic/swords/actions/workflows/publish.yml/badge.svg)](https://github.com/patfantmusic/swords/actions/workflows/publish.yml)
 
 A dead-simple CLI for looking up song lyrics.
 
