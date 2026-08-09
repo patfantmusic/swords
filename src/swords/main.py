@@ -1,107 +1,184 @@
-"""A lightweight script to search Genius for song lyrics."""
-
-from dataclasses import dataclass, fields
-import re
-from typing import Any
-from urllib.parse import quote_plus
-
-import click
-from selectolax.lexbor import LexborHTMLParser
+import sys
 import requests
+import click
+import inquirer
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
+
+# Initialize Rich console for terminal formatting
+console = Console()
+
+# LRCLIB requires a User-Agent to identify the client interacting with their API
+HEADERS = {"User-Agent": "swords CLI v2.0 (https://github.com/yourusername/swords)"}
 
 
-@dataclass
-class Song:
-    """Represents song data from Genius."""
+def search_lrclib(query: str, artist: str = None) -> list:
+    """Searches LRCLIB for a song and returns a list of results."""
+    url = "https://lrclib.net/api/search"
 
-    primary_artist_names: str
-    title: str
-    url: str
+    # Construct parameters based on what the user provided
+    params = {}
+    if artist:
+        params["track_name"] = query
+        params["artist_name"] = artist
+    else:
+        params["q"] = query
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Song":
-        class_fields = {field.name for field in fields(cls)}
-        filtered_data = {
-            key: value for key, value in data.items() if key in class_fields
-        }
-        return cls(**filtered_data)
+    # Display a loading spinner while fetching the API
+    with console.status(
+        "[bold green]Searching for lyrics...[/bold green]", spinner="dots"
+    ):
+        try:
+            response = requests.get(url, params=params, headers=HEADERS, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            return data
+        except requests.exceptions.RequestException as e:
+            console.print(f"[bold red]Error communicating with LRCLIB:[/bold red] {e}")
+            sys.exit(1)
 
 
-def get_song_choices(query: str) -> list[Song]:
-    """Query Genius for songs that match the given search."""
-    response = requests.get(
-        "https://genius.com/api/search/multi",
-        params={"per_page": 5, "q": quote_plus(query)},
+def display_lyrics(song_data: dict):
+    """Formats and prints the lyrics using Rich."""
+    title = song_data.get("trackName", "Unknown Title")
+    artist = song_data.get("artistName", "Unknown Artist")
+    album = song_data.get("albumName", "Unknown Album")
+
+    # Prefer plainLyrics, fallback to syncedLyrics, then handle missing lyrics
+    lyrics = song_data.get("plainLyrics")
+    if not lyrics:
+        lyrics = song_data.get("syncedLyrics")
+        if lyrics:
+            console.print(
+                "[yellow]Note: Displaying synced lyrics (contains timestamps).[/yellow]"
+            )
+
+    if not lyrics:
+        if song_data.get("instrumental"):
+            lyrics = "*This track is marked as instrumental (no lyrics).*"
+        else:
+            lyrics = "*No lyrics found for this track.*"
+
+    # Create a nicely formatted header text for the song metadata
+    header = Text()
+    header.append(f"{title}\n", style="bold cyan")
+    header.append(f"by {artist}\n", style="bold magenta")
+    if album:
+        header.append(f"Album: {album}", style="italic dim")
+
+    # Render the output inside a styled Panel
+    panel = Panel(
+        lyrics, title=header, title_align="center", border_style="green", expand=False
     )
-    response.raise_for_status()
-    data = response.json()
-    results = []
-    for section in data["response"]["sections"]:
-        if section["type"] == "song":
-            for hit in section["hits"]:
-                song = Song.from_dict(hit["result"])
-                results.append(song)
-    return results
+
+    # Use Rich's pager so long lyrics don't scroll off the screen
+    with console.pager():
+        console.print(panel)
 
 
-def get_lyrics(song: Song) -> str:
-    """Given a song, get Genius's corresponding lyrics using selectolax (Lexbor)."""
-    response = requests.get(song.url)
-    response.raise_for_status()
-
-    parser = LexborHTMLParser(response.text)
-    lyrics_list = []
-
-    # Find all lyric container divs
-    for section in parser.css('div[class^="Lyrics__Container"]'):
-        # Manually find and decompose the header containers
-        for header in section.css('div[class^="LyricsHeader__Container"]'):
-            header.decompose()
-
-        # Get text with a newline separator
-        # strip=True removes leading/trailing whitespace from the resulting string
-        text = section.text(separator="\n", strip=True)
-        if text:
-            lyrics_list.append(text)
-
-    return "\n".join(lyrics_list)
-
-
-@click.command
-@click.argument("query")
-def search(query: str) -> None:
+@click.command()
+@click.argument("query", required=False)
+@click.option("-a", "--artist", help="Filter search by artist name.")
+def main(query, artist):
     """
-    Takes a search query, finds up to 5 matches, and displays lyrics for a
-    chosen match.
+    SWORDS: Song WORD Search.
+
+    Search for song lyrics right in your terminal.
+    If no QUERY is provided, you will be prompted.
     """
-    click.echo("Searching...")
-    click.echo("")
 
-    song_choices = get_song_choices(query)
-    click.echo("Choices:")
-    for i, song in enumerate(song_choices):
-        click.echo(f"{i}. {song.title} - {song.primary_artist_names}")
-    click.echo("")
+    # 1. Handle missing arguments with an interactive text prompt
+    if not query:
+        questions = [inquirer.Text("query", message="Enter a song name to search for")]
+        answers = inquirer.prompt(questions)
 
-    choice_id = click.prompt(
-        "Select an option",
-        type=click.IntRange(0, len(song_choices) - 1),
+        # If user cancels the prompt (Ctrl+C)
+        if not answers or not answers.get("query"):
+            console.print("[yellow]Search cancelled.[/yellow]")
+            sys.exit(0)
+
+        query = answers["query"]
+
+    # 2. Fetch results from LRCLIB
+    results = search_lrclib(query, artist)
+
+    if not results:
+        console.print(f"[bold red]No lyrics found for '{query}'.[/bold red]")
+        sys.exit(0)
+
+    # Limit results to the top 15 to prevent the terminal from scrolling down
+    # and losing the top of the menu in small panes (like tmux).
+    results = results[:15]
+
+    # 3. If there's only one result, bypass the menu and show it
+    if len(results) == 1:
+        display_lyrics(results[0])
+        sys.exit(0)
+
+    # 4. If multiple results, use python-inquirer for an interactive selection menu
+    # Find max widths for columns to create a neat table, capping lengths
+    max_t = min(40, max(len(str(item.get("trackName", "Unknown"))) for item in results))
+    max_a = min(
+        30, max(len(str(item.get("artistName", "Unknown"))) for item in results)
     )
-    choice = song_choices[choice_id]
-    lyrics = get_lyrics(choice)
+    max_al = min(30, max(len(str(item.get("albumName", "") or "")) for item in results))
 
-    # Assume anything in brackets is a section header and format accordingly.
-    formatted_lyrics = re.sub(
-        r"(\[.*?\])",
-        lambda m: "\n" + click.style(m.group(0), bold=True),
-        lyrics,
-    )
+    def format_col(text, max_len):
+        """Truncate text if too long, or pad it with spaces if short."""
+        text = str(text or "")
+        if len(text) > max_len:
+            return text[: max_len - 3] + "..."
+        return text.ljust(max_len)
 
-    click.echo("=" * 80)
-    click.echo("")
-    click.echo(f"{formatted_lyrics.strip()}")
-    click.echo("")
+    choices = []
+
+    # Enumerate to get rankings (1 is best), then reverse to put the best at the bottom
+    ranked_results = list(enumerate(results, start=1))
+    ranked_results.reverse()
+
+    for rank, item in ranked_results:
+        t = format_col(item.get("trackName", "Unknown"), max_t)
+        a = format_col(item.get("artistName", "Unknown"), max_a)
+        al = format_col(item.get("albumName", ""), max_al)
+
+        # Combine into a table-like row separated by pipes, with the rank on the left
+        # We use >2 to pad single-digit numbers so 1 and 15 line up perfectly
+        display_text = f"{rank:>2}. {t} │ {a} │ {al}"
+        choices.append((display_text, item))
+
+    choices.append(("Cancel", None))
+
+    # Show the interactive arrow-key menu
+    questions = [
+        inquirer.List(
+            "selected_song",
+            message="Select a song (1 is best match)",
+            choices=choices,
+            default=results[0],  # Automatically place the cursor on the best match
+            carousel=True,  # Allow wrapping from bottom to top
+        )
+    ]
+
+    answers = inquirer.prompt(questions)
+
+    # If the user hits Ctrl+C or selects "Cancel", prompt returns None
+    if not answers or answers.get("selected_song") is None:
+        console.print("[yellow]Cancelled.[/yellow]")
+        sys.exit(0)
+
+    selected_song = answers["selected_song"]
+
+    # 5. Display the selected lyrics
+    display_lyrics(selected_song)
 
 
 if __name__ == "__main__":
-    search()
+    # Ensure dependencies are noted for the user before running
+    try:
+        import inquirer
+    except ImportError:
+        print("Please install requirements: pip install click rich inquirer requests")
+        sys.exit(1)
+
+    main()
